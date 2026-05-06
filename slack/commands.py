@@ -42,7 +42,7 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
         target, label = _parse_date_arg(text)
 
         try:
-            courses = get_courses_for_date(db_path, target)
+            courses = get_courses_for_date(db_path, target, user_id)
             respond(blocks=build_schedule_message(courses, label), response_type="ephemeral")
         except Exception as e:
             logger.error("/시간표 실패: %s", e)
