@@ -81,7 +81,11 @@ cp .env.example .env
 
 1. [api.slack.com/apps](https://api.slack.com/apps) → **Create New App**
 2. **OAuth & Permissions** → Bot Token Scopes 추가: `chat:write`, `commands`, `im:write`
-3. **Slash Commands** → `/날씨`, `/시간표`, `/설정`, `/도움말` 등록
+3. **Slash Commands** → 아래 명령어 중 사용할 이름을 등록
+   - 권장: `/weather`, `/schedule`, `/config`, `/bot-help`
+   - 호환: `/날씨`, `/시간표`, `/설정`, `/도움말`
+   - HTTP 모드 Request URL: `https://{your-domain}/slack/events`
+   - Socket Mode 사용 시 Request URL은 필요하지 않지만, **Socket Mode 활성화**와 `SLACK_APP_TOKEN` 설정이 필요합니다.
 4. 봇을 `#daily-brief` 채널에 초대: `/invite @봇이름`
 
 > **로컬 개발** 시 [Socket Mode](https://api.slack.com/apis/connections/socket)를 활성화하면 ngrok 없이 실행할 수 있습니다.  
@@ -101,12 +105,20 @@ python main.py
 
 | 커맨드 | 인자 | 동작 |
 |--------|------|------|
-| `/날씨` | `[도시명]` | 실시간 날씨 조회 (생략 시 설정된 도시) |
-| `/시간표` | `[오늘\|내일\|YYYY-MM-DD]` | 해당 날짜 강의 목록 조회 |
-| `/설정` | `[도시] [HH:MM]` | 위치 및 알림 시각 변경 |
-| `/도움말` | — | 커맨드 목록 안내 |
+| `/weather`, `/날씨` | `[도시명]` | 실시간 날씨 조회 (생략 시 설정된 도시) |
+| `/schedule`, `/시간표` | `[오늘\|내일\|YYYY-MM-DD]` | 해당 날짜 강의 목록 조회 |
+| `/schedule 추가`, `/시간표 추가` | `<요일> <시작 HH:MM> <종료 HH:MM> <과목명> [장소] [교수] [메모]` | 개인 시간표에 일정 추가 |
+| `/config`, `/설정` | `[도시] [HH:MM]` | 위치 및 알림 시각 변경. 인자 없이 실행하면 현재 설정 조회 |
+| `/bot-help`, `/도움말` | — | 커맨드 목록 안내 |
 
 모든 커맨드 응답은 본인에게만 보이는 ephemeral 메시지입니다.
+
+공백이 포함된 과목명이나 장소는 따옴표로 감싸면 됩니다.
+
+```bash
+/시간표 추가 월 09:00 10:30 알고리즘 공학관401호 박교수
+/시간표 추가 수 13:00 14:30 "데이터베이스 설계" "공학관 301호" 최교수
+```
 
 ## 에러 처리
 

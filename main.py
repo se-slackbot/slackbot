@@ -28,6 +28,12 @@ def _require_env(name: str) -> str:
     return val
 
 
+def _ensure_db_directory(db_path: str) -> None:
+    db_dir = os.path.dirname(db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+
 def main() -> None:
     bot_token = _require_env("SLACK_BOT_TOKEN")
     signing_secret = _require_env("SLACK_SIGNING_SECRET")
@@ -37,7 +43,7 @@ def main() -> None:
     db_path = os.getenv("DB_PATH", "./data/bot.db")
     app_token = os.getenv("SLACK_APP_TOKEN", "")
 
-    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    _ensure_db_directory(db_path)
     init_db(db_path)
 
     # 샘플 데이터가 없을 때만 삽입
@@ -53,7 +59,7 @@ def main() -> None:
     register_commands(app, config_store, api_key, db_path)
 
     default_city = os.getenv("DEFAULT_CITY", "Seoul")
-    scheduler = create_scheduler(app, channel_id, api_key, db_path, default_city, notify_time)
+    scheduler = create_scheduler(app, channel_id, api_key, db_path, default_city, notify_time, config_store)
     scheduler.start()
     logger.info("스케줄러 시작 완료")
 

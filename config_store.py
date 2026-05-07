@@ -67,6 +67,20 @@ class ConfigStore:
             return config
         return {"slack_user_id": slack_user_id, **copy.deepcopy(DEFAULT_CONFIG)}
 
+    def list_all(self) -> list[dict]:
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM user_config ORDER BY slack_user_id"
+            ).fetchall()
+
+        configs = []
+        for row in rows:
+            config = dict(row)
+            config["settings"] = _loads_settings(config.pop("settings_json", "{}"))
+            configs.append(config)
+        return configs
+
     def set(
         self,
         slack_user_id: str,

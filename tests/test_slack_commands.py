@@ -1,10 +1,40 @@
 """slack/commands.py 보조 함수 테스트"""
 import pytest
+import tempfile
 from datetime import date
 import sys, os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from slack.commands import _parse_date_arg, _is_valid_time
+from config_store import ConfigStore
+from schedule.repository import get_courses_for_date, init_db
+from slack.commands import (
+    _parse_add_course_arg,
+    _parse_date_arg,
+    _is_valid_time,
+    _normalize_day,
+    register_commands,
+)
+
+
+class FakeApp:
+    def __init__(self):
+        self.handlers = {}
+
+    def command(self, name):
+        def decorator(func):
+            self.handlers[name] = func
+            return func
+
+        return decorator
+
+
+@pytest.fixture
+def db_path():
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        path = f.name
+    init_db(path)
+    yield path
+    os.unlink(path)
 
 
 class TestParseDateArg:
@@ -69,3 +99,109 @@ class TestIsValidTime:
 
     def test_콜론_초과(self):
         assert _is_valid_time("07:00:00") is False
+
+
+class TestNormalizeDay:
+    def test_한국어_요일(self):
+        assert _normalize_day("월") == "Mon"
+        assert _normalize_day("화요일") == "Tue"
+
+    def test_영문_요일(self):
+        assert _normalize_day("wed") == "Wed"
+        assert _normalize_day("Friday") == "Fri"
+
+    def test_잘못된_요일(self):
+        with pytest.raises(ValueError):
+            _normalize_day("평일")
+
+
+class TestParseAddCourseArg:
+    def test_필수값_파싱(self):
+        parsed = _parse_add_course_arg("추가 월 09:00 10:30 알고리즘")
+        assert parsed == {
+            "day_of_week": "Mon",
+            "start_time": "09:00",
+            "end_time": "10:30",
+            "course_name": "알고리즘",
+            "room": None,
+            "professor": None,
+            "memo": None,
+        }
+
+    def test_선택값_파싱(self):
+        parsed = _parse_add_course_arg("추가 수 13:00 14:30 데이터베이스 공학관301호 최교수 팀플")
+        assert parsed["day_of_week"] == "Wed"
+        assert parsed["room"] == "공학관301호"
+        assert parsed["professor"] == "최교수"
+        assert parsed["memo"] == "팀플"
+
+    def test_따옴표_포함_파싱(self):
+        parsed = _parse_add_course_arg('추가 수 13:00 14:30 "데이터베이스 설계" "공학관 301호" 최교수')
+        assert parsed["course_name"] == "데이터베이스 설계"
+        assert parsed["room"] == "공학관 301호"
+
+    def test_종료_시각이_시작보다_빠르면_실패(self):
+        with pytest.raises(ValueError):
+            _parse_add_course_arg("추가 월 10:30 09:00 알고리즘")
+
+    def test_사용법_누락_실패(self):
+        with pytest.raises(ValueError):
+            _parse_add_course_arg("추가 월 09:00")
+
+
+class TestRegisterCommandsScheduleAdd:
+    def test_영문_alias_명령어도_등록됨(self, db_path):
+        app = FakeApp()
+        store = ConfigStore(db_path)
+        register_commands(app, store, "api-key", db_path)
+
+        for command_name in ["/weather", "/schedule", "/config", "/bot-help"]:
+            assert command_name in app.handlers
+
+    def test_시간표_추가_명령어가_사용자_DB에_저장(self, db_path):
+        app = FakeApp()
+        store = ConfigStore(db_path)
+        register_commands(app, store, "api-key", db_path)
+        responses = []
+        acked = []
+
+        app.handlers["/시간표"](
+            ack=lambda: acked.append(True),
+            respond=lambda **kwargs: responses.append(kwargs),
+            command={
+                "user_id": "U_001",
+                "text": "추가 월 09:00 10:30 알고리즘 공학관401호 박교수",
+            },
+        )
+
+        monday = date(2026, 4, 27)
+        courses = get_courses_for_date(db_path, monday, "U_001")
+        assert acked == [True]
+        assert responses[0]["response_type"] == "ephemeral"
+        assert "시간표에 추가했습니다" in responses[0]["text"]
+        assert len(courses) == 1
+        assert courses[0]["course_name"] == "알고리즘"
+        assert courses[0]["room"] == "공학관401호"
+        assert courses[0]["professor"] == "박교수"
+
+
+class TestRegisterCommandsConfig:
+    def test_설정_명령어_인자_없으면_현재_설정_응답(self, db_path):
+        app = FakeApp()
+        store = ConfigStore(db_path)
+        store.set("U_001", city="Busan", notify_time="08:30")
+        register_commands(app, store, "api-key", db_path)
+        responses = []
+        acked = []
+
+        app.handlers["/config"](
+            ack=lambda: acked.append(True),
+            respond=lambda **kwargs: responses.append(kwargs),
+            say=lambda **kwargs: None,
+            command={"user_id": "U_001", "command": "/config", "text": ""},
+        )
+
+        assert acked == [True]
+        assert responses[0]["response_type"] == "ephemeral"
+        assert "현재 설정" in responses[0]["text"]
+        assert "Busan" in responses[0]["text"]
