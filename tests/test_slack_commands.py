@@ -6,11 +6,14 @@ import sys, os
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from config_store import ConfigStore
-from schedule.repository import get_courses_for_date, init_db
+from schedule.repository import add_course, get_courses_for_date, init_db
 from slack.commands import (
     _parse_add_course_arg,
     _parse_date_arg,
+    _parse_delete_course_arg,
+    _parse_update_course_arg,
     _is_valid_time,
+    _is_valid_timezone,
     _normalize_day,
     register_commands,
 )
@@ -101,6 +104,15 @@ class TestIsValidTime:
         assert _is_valid_time("07:00:00") is False
 
 
+class TestIsValidTimezone:
+    def test_정상_타임존(self):
+        assert _is_valid_timezone("Asia/Seoul") is True
+        assert _is_valid_timezone("America/New_York") is True
+
+    def test_잘못된_타임존(self):
+        assert _is_valid_timezone("Seoul") is False
+
+
 class TestNormalizeDay:
     def test_한국어_요일(self):
         assert _normalize_day("월") == "Mon"
@@ -149,6 +161,42 @@ class TestParseAddCourseArg:
             _parse_add_course_arg("추가 월 09:00")
 
 
+class TestParseUpdateCourseArg:
+    def test_필드_수정_파싱(self):
+        course_id, fields = _parse_update_course_arg(
+            '수정 12 day=화 start=10:00 end=11:30 name="데이터베이스 설계" room="공학관 301호"'
+        )
+        assert course_id == 12
+        assert fields == {
+            "day_of_week": "Tue",
+            "start_time": "10:00",
+            "end_time": "11:30",
+            "course_name": "데이터베이스 설계",
+            "room": "공학관 301호",
+        }
+
+    def test_잘못된_ID_실패(self):
+        with pytest.raises(ValueError):
+            _parse_update_course_arg("수정 abc room=303")
+
+    def test_field_value_형식_아니면_실패(self):
+        with pytest.raises(ValueError):
+            _parse_update_course_arg("수정 1 room")
+
+    def test_종료_시각이_시작보다_빠르면_실패(self):
+        with pytest.raises(ValueError):
+            _parse_update_course_arg("수정 1 start=12:00 end=11:00")
+
+
+class TestParseDeleteCourseArg:
+    def test_ID_파싱(self):
+        assert _parse_delete_course_arg("삭제 42") == 42
+
+    def test_잘못된_ID_실패(self):
+        with pytest.raises(ValueError):
+            _parse_delete_course_arg("삭제 abc")
+
+
 class TestRegisterCommandsScheduleAdd:
     def test_영문_alias_명령어도_등록됨(self, db_path):
         app = FakeApp()
@@ -185,6 +233,49 @@ class TestRegisterCommandsScheduleAdd:
         assert courses[0]["professor"] == "박교수"
 
 
+class TestRegisterCommandsScheduleUpdateDelete:
+    def test_시간표_수정_명령어가_사용자_DB를_수정(self, db_path):
+        app = FakeApp()
+        store = ConfigStore(db_path)
+        register_commands(app, store, "api-key", db_path)
+        responses = []
+        course_id = add_course(db_path, "U_001", "알고리즘", "Mon", "09:00", "10:30")
+
+        app.handlers["/schedule"](
+            ack=lambda: None,
+            respond=lambda **kwargs: responses.append(kwargs),
+            command={
+                "user_id": "U_001",
+                "text": f"수정 {course_id} room=공학관401호 memo=복습",
+            },
+        )
+
+        monday = date(2026, 4, 27)
+        courses = get_courses_for_date(db_path, monday, "U_001")
+        assert responses[0]["response_type"] == "ephemeral"
+        assert "수정했습니다" in responses[0]["text"]
+        assert courses[0]["room"] == "공학관401호"
+        assert courses[0]["memo"] == "복습"
+
+    def test_시간표_삭제_명령어가_사용자_DB에서_삭제(self, db_path):
+        app = FakeApp()
+        store = ConfigStore(db_path)
+        register_commands(app, store, "api-key", db_path)
+        responses = []
+        course_id = add_course(db_path, "U_001", "알고리즘", "Mon", "09:00", "10:30")
+
+        app.handlers["/시간표"](
+            ack=lambda: None,
+            respond=lambda **kwargs: responses.append(kwargs),
+            command={"user_id": "U_001", "text": f"삭제 {course_id}"},
+        )
+
+        monday = date(2026, 4, 27)
+        assert responses[0]["response_type"] == "ephemeral"
+        assert "삭제했습니다" in responses[0]["text"]
+        assert get_courses_for_date(db_path, monday, "U_001") == []
+
+
 class TestRegisterCommandsConfig:
     def test_설정_명령어_인자_없으면_현재_설정_응답(self, db_path):
         app = FakeApp()
@@ -205,3 +296,39 @@ class TestRegisterCommandsConfig:
         assert responses[0]["response_type"] == "ephemeral"
         assert "현재 설정" in responses[0]["text"]
         assert "Busan" in responses[0]["text"]
+        assert "Asia/Seoul" in responses[0]["text"]
+
+    def test_설정_명령어_타임존까지_저장(self, db_path):
+        app = FakeApp()
+        store = ConfigStore(db_path)
+        register_commands(app, store, "api-key", db_path)
+        responses = []
+
+        app.handlers["/설정"](
+            ack=lambda: None,
+            respond=lambda **kwargs: responses.append(kwargs),
+            say=lambda **kwargs: None,
+            command={"user_id": "U_001", "command": "/설정", "text": "Tokyo 09:10 Asia/Tokyo"},
+        )
+
+        config = store.get("U_001")
+        assert responses[0]["response_type"] == "ephemeral"
+        assert config["city"] == "Tokyo"
+        assert config["notify_time"] == "09:10"
+        assert config["timezone"] == "Asia/Tokyo"
+
+    def test_설정_명령어_잘못된_타임존_거부(self, db_path):
+        app = FakeApp()
+        store = ConfigStore(db_path)
+        register_commands(app, store, "api-key", db_path)
+        responses = []
+
+        app.handlers["/config"](
+            ack=lambda: None,
+            respond=lambda **kwargs: responses.append(kwargs),
+            say=lambda **kwargs: None,
+            command={"user_id": "U_001", "command": "/config", "text": "Seoul 07:00 Seoul"},
+        )
+
+        assert responses[0]["response_type"] == "ephemeral"
+        assert "타임존" in responses[0]["text"]
