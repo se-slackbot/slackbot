@@ -16,8 +16,8 @@ from config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
-WEATHER_COMMANDS = ("/날씨", "/weather")
-SCHEDULE_COMMANDS = ("/시간표", "/schedule")
+WEATHER_COMMANDS = ("/날씨", "/날씨1", "/weather")
+SCHEDULE_COMMANDS = ("/시간표", "/시간표1", "/schedule")
 CONFIG_COMMANDS = ("/설정", "/config")
 HELP_COMMANDS = ("/도움말", "/bot-help")
 

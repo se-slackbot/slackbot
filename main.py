@@ -1,11 +1,15 @@
 import logging
 import os
 import sys
+import threading
 
+import psycopg2
+import uvicorn
 from dotenv import load_dotenv
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 
+from api import create_api
 from config_store import ConfigStore
 from schedule.repository import init_db, insert_sample_data
 from slack.commands import register_commands
@@ -28,10 +32,14 @@ def _require_env(name: str) -> str:
     return val
 
 
-def _ensure_db_directory(db_path: str) -> None:
-    db_dir = os.path.dirname(db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+def _count_courses() -> int:
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM courses")
+            return cur.fetchone()[0]
+    finally:
+        conn.close()
 
 
 def main() -> None:
@@ -39,18 +47,15 @@ def main() -> None:
     signing_secret = _require_env("SLACK_SIGNING_SECRET")
     api_key = _require_env("OPENWEATHER_API_KEY")
     channel_id = _require_env("SLACK_CHANNEL_ID")
+    _require_env("DATABASE_URL")
+
     notify_time = os.getenv("NOTIFY_TIME", "07:00")
-    db_path = os.getenv("DB_PATH", "./data/bot.db")
+    db_path = ""  # PostgreSQL 사용으로 불필요 (하위 호환용)
     app_token = os.getenv("SLACK_APP_TOKEN", "")
 
-    _ensure_db_directory(db_path)
     init_db(db_path)
 
-    # 샘플 데이터가 없을 때만 삽입
-    import sqlite3
-    with sqlite3.connect(db_path) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM courses").fetchone()[0]
-    if count == 0:
+    if _count_courses() == 0:
         insert_sample_data(db_path)
 
     app = App(token=bot_token, signing_secret=signing_secret)
@@ -63,14 +68,25 @@ def main() -> None:
     scheduler.start()
     logger.info("스케줄러 시작 완료")
 
+    # FastAPI (캘린더 ICS) 백그라운드 실행
+    api_app = create_api()
+    api_port = int(os.getenv("API_PORT", 3000))
+    api_thread = threading.Thread(
+        target=uvicorn.run,
+        args=(api_app,),
+        kwargs={"host": "0.0.0.0", "port": api_port, "log_level": "warning"},
+        daemon=True,
+    )
+    api_thread.start()
+    logger.info("캘린더 API 시작 완료 (포트: %d)", api_port)
+
     if app_token:
         logger.info("Socket Mode로 시작")
         handler = SocketModeHandler(app, app_token)
         handler.start()
     else:
-        port = int(os.getenv("PORT", 3000))
-        logger.info("HTTP 모드로 시작 (포트: %d)", port)
-        app.start(port=port)
+        logger.info("HTTP 모드로 시작")
+        app.start(port=int(os.getenv("PORT", 3001)))
 
 
 if __name__ == "__main__":
