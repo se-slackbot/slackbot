@@ -1,9 +1,11 @@
 from __future__ import annotations
+import os
+import secrets
 import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import Response
 
 from schedule.repository import get_all_courses_for_user
@@ -52,7 +54,7 @@ def _build_ics(courses: list[dict]) -> bytes:
         event.add("dtstart", datetime(event_date.year, event_date.month, event_date.day, sh, sm, tzinfo=tz))
         event.add("dtend",   datetime(event_date.year, event_date.month, event_date.day, eh, em, tzinfo=tz))
         event.add("rrule", {"freq": "weekly", "byday": [rrule_day]})
-        event.add("uid", str(uuid.uuid4()))
+        event.add("uid", str(uuid.uuid5(uuid.NAMESPACE_URL, f"slackbot:{course['slack_user_id']}:{course['id']}")))
 
         if course.get("room"):
             event.add("location", course["room"])
@@ -74,7 +76,8 @@ def create_api() -> FastAPI:
     app = FastAPI(title="Slackbot Calendar API")
 
     @app.get("/calendar/{slack_user_id}.ics", summary="강의 시간표 ICS 다운로드")
-    def get_calendar(slack_user_id: str):
+    def get_calendar(slack_user_id: str, token: str = Query(default="")):
+        _verify_calendar_token(token)
         try:
             courses = get_all_courses_for_user(slack_user_id)
         except Exception as e:
@@ -84,7 +87,7 @@ def create_api() -> FastAPI:
         return Response(
             content=ics_bytes,
             media_type="text/calendar; charset=utf-8",
-            headers={"Content-Disposition": f"attachment; filename={slack_user_id}.ics"},
+            headers={"Content-Disposition": f"attachment; filename={_safe_filename(slack_user_id)}.ics"},
         )
 
     @app.get("/health")
@@ -92,3 +95,15 @@ def create_api() -> FastAPI:
         return {"status": "ok"}
 
     return app
+
+
+def _verify_calendar_token(token: str) -> None:
+    expected = os.getenv("CALENDAR_ACCESS_TOKEN")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Calendar access token is not configured")
+    if not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=403, detail="Invalid calendar access token")
+
+
+def _safe_filename(value: str) -> str:
+    return "".join(ch for ch in value if ch.isalnum() or ch in ("-", "_")) or "calendar"

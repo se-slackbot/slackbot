@@ -2,11 +2,9 @@ from __future__ import annotations
 import logging
 import json
 import copy
-import os
 from typing import Any
 
-import psycopg2
-from psycopg2.extras import RealDictCursor
+from database import connect, cursor, is_postgres, now_sql, placeholder, resolve_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +21,19 @@ CREATE TABLE IF NOT EXISTS user_config (
 )
 """
 
+CREATE_USER_CONFIG_SQLITE = """
+CREATE TABLE IF NOT EXISTS user_config (
+    slack_user_id TEXT PRIMARY KEY,
+    city          TEXT NOT NULL DEFAULT 'Seoul',
+    region        TEXT NOT NULL DEFAULT 'Seoul',
+    notify_time   TEXT NOT NULL DEFAULT '07:00',
+    timezone      TEXT NOT NULL DEFAULT 'Asia/Seoul',
+    settings_json TEXT NOT NULL DEFAULT '{}',
+    created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+)
+"""
+
 DEFAULT_CONFIG = {
     "city": "Seoul",
     "region": "Seoul",
@@ -31,32 +42,23 @@ DEFAULT_CONFIG = {
     "settings": {},
 }
 
-
-def _get_conn():
-    return psycopg2.connect(os.environ["DATABASE_URL"])
-
-
 class ConfigStore:
-    def __init__(self, db_path: str) -> None:
-        conn = _get_conn()
-        try:
+    def __init__(self, db_path: str | None = None) -> None:
+        self.db_path = resolve_db_path(db_path)
+        with connect(self.db_path) as conn:
             with conn:
-                with conn.cursor() as cur:
-                    cur.execute(CREATE_USER_CONFIG)
-        finally:
-            conn.close()
+                with cursor(conn) as cur:
+                    cur.execute(CREATE_USER_CONFIG if is_postgres(self.db_path) else CREATE_USER_CONFIG_SQLITE)
 
     def get(self, slack_user_id: str) -> dict:
-        conn = _get_conn()
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        ph = placeholder(self.db_path)
+        with connect(self.db_path, dict_rows=True) as conn:
+            with cursor(conn, dict_rows=True) as cur:
                 cur.execute(
-                    "SELECT * FROM user_config WHERE slack_user_id = %s",
+                    f"SELECT * FROM user_config WHERE slack_user_id = {ph}",
                     (slack_user_id,),
                 )
                 row = cur.fetchone()
-        finally:
-            conn.close()
         if row:
             config = dict(row)
             config["settings"] = _loads_settings(config.pop("settings_json", "{}"))
@@ -64,13 +66,10 @@ class ConfigStore:
         return {"slack_user_id": slack_user_id, **copy.deepcopy(DEFAULT_CONFIG)}
 
     def list_all(self) -> list[dict]:
-        conn = _get_conn()
-        try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+        with connect(self.db_path, dict_rows=True) as conn:
+            with cursor(conn, dict_rows=True) as cur:
                 cur.execute("SELECT * FROM user_config ORDER BY slack_user_id")
                 rows = cur.fetchall()
-        finally:
-            conn.close()
         configs = []
         for row in rows:
             config = dict(row)
@@ -96,34 +95,56 @@ class ConfigStore:
         if settings is not None:
             new_settings.update(settings)
 
-        conn = _get_conn()
-        try:
+        ph = placeholder(self.db_path)
+        with connect(self.db_path) as conn:
             with conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        """
-                        INSERT INTO user_config
-                            (slack_user_id, city, region, notify_time, timezone, settings_json)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (slack_user_id) DO UPDATE SET
-                            city          = EXCLUDED.city,
-                            region        = EXCLUDED.region,
-                            notify_time   = EXCLUDED.notify_time,
-                            timezone      = EXCLUDED.timezone,
-                            settings_json = EXCLUDED.settings_json,
-                            updated_at    = NOW()
-                        """,
-                        (
-                            slack_user_id,
-                            new_city,
-                            new_region,
-                            new_time,
-                            new_tz,
-                            json.dumps(new_settings, ensure_ascii=False, sort_keys=True),
-                        ),
-                    )
-        finally:
-            conn.close()
+                with cursor(conn) as cur:
+                    if is_postgres(self.db_path):
+                        cur.execute(
+                            f"""
+                            INSERT INTO user_config
+                                (slack_user_id, city, region, notify_time, timezone, settings_json)
+                            VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+                            ON CONFLICT (slack_user_id) DO UPDATE SET
+                                city          = EXCLUDED.city,
+                                region        = EXCLUDED.region,
+                                notify_time   = EXCLUDED.notify_time,
+                                timezone      = EXCLUDED.timezone,
+                                settings_json = EXCLUDED.settings_json,
+                                updated_at    = {now_sql(self.db_path)}
+                            """,
+                            (
+                                slack_user_id,
+                                new_city,
+                                new_region,
+                                new_time,
+                                new_tz,
+                                json.dumps(new_settings, ensure_ascii=False, sort_keys=True),
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            f"""
+                            INSERT INTO user_config
+                                (slack_user_id, city, region, notify_time, timezone, settings_json)
+                            VALUES ({ph}, {ph}, {ph}, {ph}, {ph}, {ph})
+                            ON CONFLICT (slack_user_id) DO UPDATE SET
+                                city          = excluded.city,
+                                region        = excluded.region,
+                                notify_time   = excluded.notify_time,
+                                timezone      = excluded.timezone,
+                                settings_json = excluded.settings_json,
+                                updated_at    = {now_sql(self.db_path)}
+                            """,
+                            (
+                                slack_user_id,
+                                new_city,
+                                new_region,
+                                new_time,
+                                new_tz,
+                                json.dumps(new_settings, ensure_ascii=False, sort_keys=True),
+                            ),
+                        )
         logger.info("사용자 설정 저장: %s → city=%s, time=%s", slack_user_id, new_city, new_time)
 
 

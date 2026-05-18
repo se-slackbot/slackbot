@@ -72,8 +72,8 @@ class TestFetchWeather:
         result = fetch_weather("Seoul", "FAKE_KEY")
         assert result["temp"] == 15
 
-    def test_API_실패_만료_캐시_없는_경우_예외_발생(self, requests_mock):
-        """API 실패이고 캐시도 만료됐으면 예외를 그대로 올림"""
+    def test_API_실패시_만료_캐시도_폴백으로_반환(self, requests_mock):
+        """API 실패 시 오래된 캐시라도 있으면 폴백으로 반환"""
         import requests as req
         _cache["weather:Seoul"] = {
             "data": {"city": "Seoul", "temp": 15, "feels_like": 13, "humidity": 70,
@@ -82,8 +82,8 @@ class TestFetchWeather:
         }
         requests_mock.get("https://api.openweathermap.org/data/2.5/weather", exc=req.RequestException("timeout"))
 
-        with pytest.raises(req.RequestException):
-            fetch_weather("Seoul", "FAKE_KEY")
+        result = fetch_weather("Seoul", "FAKE_KEY")
+        assert result["temp"] == 15
 
     def test_기온_반올림_정수_반환(self, requests_mock):
         resp = {**WEATHER_RESPONSE, "main": {"temp": 18.6, "feels_like": 16.3, "humidity": 60}}

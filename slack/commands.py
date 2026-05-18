@@ -1,6 +1,6 @@
 import logging
 import shlex
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from slack_bolt import App
@@ -24,8 +24,62 @@ CONFIG_COMMANDS = ("/설정", "/config")
 HELP_COMMANDS = ("/도움말", "/bot-help")
 BRIEF_COMMANDS = ("/브리핑", "/브리핑1", "/brief")
 
+UPDATE_FIELD_ALIASES = {
+    "name": "course_name",
+    "course": "course_name",
+    "course_name": "course_name",
+    "과목": "course_name",
+    "과목명": "course_name",
+    "day": "day_of_week",
+    "day_of_week": "day_of_week",
+    "요일": "day_of_week",
+    "start": "start_time",
+    "start_time": "start_time",
+    "시작": "start_time",
+    "end": "end_time",
+    "end_time": "end_time",
+    "종료": "end_time",
+    "room": "room",
+    "장소": "room",
+    "professor": "professor",
+    "교수": "professor",
+    "memo": "memo",
+    "메모": "memo",
+}
 
-def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path: str) -> None:
+DAY_ALIASES = {
+    "mon": "Mon",
+    "monday": "Mon",
+    "월": "Mon",
+    "월요일": "Mon",
+    "tue": "Tue",
+    "tuesday": "Tue",
+    "화": "Tue",
+    "화요일": "Tue",
+    "wed": "Wed",
+    "wednesday": "Wed",
+    "수": "Wed",
+    "수요일": "Wed",
+    "thu": "Thu",
+    "thursday": "Thu",
+    "목": "Thu",
+    "목요일": "Thu",
+    "fri": "Fri",
+    "friday": "Fri",
+    "금": "Fri",
+    "금요일": "Fri",
+    "sat": "Sat",
+    "saturday": "Sat",
+    "토": "Sat",
+    "토요일": "Sat",
+    "sun": "Sun",
+    "sunday": "Sun",
+    "일": "Sun",
+    "일요일": "Sun",
+}
+
+
+def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path: str | None = None) -> None:
 
     def cmd_weather(ack, respond, command):
         ack()
@@ -113,7 +167,9 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
                 respond(text=f":warning: 시간표를 삭제할 수 없습니다: {e}", response_type="ephemeral")
             return
 
-        target, label = _parse_date_arg(text.lower())
+        config = config_store.get(user_id)
+        today = _today_for_timezone(config.get("timezone"))
+        target, label = _parse_date_arg(text.lower(), today=today)
 
         try:
             courses = get_courses_for_date(db_path, target, user_id)
@@ -186,12 +242,10 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
         timezone = config.get("timezone") or "Asia/Seoul"
 
         try:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo as _ZoneInfo
-            today = datetime.now(_ZoneInfo(timezone)).date()
+            today = datetime.now(ZoneInfo(timezone)).date()
             weather = fetch_weather(city, api_key)
             courses = get_courses_for_date(db_path, today, user_id)
-            calendar_events = fetch_today_events(timezone=timezone)
+            calendar_events = fetch_today_events(timezone=timezone, user_id=user_id)
             blocks = build_daily_message(weather, courses, timezone=timezone, calendar_events=calendar_events)
             respond(blocks=blocks, response_type="ephemeral")
         except Exception as e:
@@ -210,8 +264,17 @@ def _register_aliases(app: App, command_names: tuple[str, ...], handler) -> None
         app.command(command_name)(handler)
 
 
-def _parse_date_arg(text: str) -> tuple[date, str]:
-    today = date.today()
+def _today_for_timezone(timezone: str | None) -> date:
+    if not timezone:
+        return date.today()
+    try:
+        return datetime.now(ZoneInfo(timezone)).date()
+    except (ZoneInfoNotFoundError, ValueError):
+        return date.today()
+
+
+def _parse_date_arg(text: str, today: date | None = None) -> tuple[date, str]:
+    today = today or date.today()
     if not text or text == "오늘":
         return today, "오늘"
     if text == "내일":
@@ -319,30 +382,8 @@ def _parse_delete_course_arg(text: str) -> int:
 
 
 def _normalize_update_field(value: str) -> str:
-    aliases = {
-        "name": "course_name",
-        "course": "course_name",
-        "course_name": "course_name",
-        "과목": "course_name",
-        "과목명": "course_name",
-        "day": "day_of_week",
-        "day_of_week": "day_of_week",
-        "요일": "day_of_week",
-        "start": "start_time",
-        "start_time": "start_time",
-        "시작": "start_time",
-        "end": "end_time",
-        "end_time": "end_time",
-        "종료": "end_time",
-        "room": "room",
-        "장소": "room",
-        "professor": "professor",
-        "교수": "professor",
-        "memo": "memo",
-        "메모": "memo",
-    }
     try:
-        return aliases[value.strip().lower()]
+        return UPDATE_FIELD_ALIASES[value.strip().lower()]
     except KeyError:
         raise ValueError("수정 가능한 항목: name, day, start, end, room, professor, memo")
 
@@ -362,37 +403,7 @@ def _validate_course_update_fields(fields: dict) -> None:
 
 def _normalize_day(value: str) -> str:
     day = value.strip().lower()
-    day_aliases = {
-        "mon": "Mon",
-        "monday": "Mon",
-        "월": "Mon",
-        "월요일": "Mon",
-        "tue": "Tue",
-        "tuesday": "Tue",
-        "화": "Tue",
-        "화요일": "Tue",
-        "wed": "Wed",
-        "wednesday": "Wed",
-        "수": "Wed",
-        "수요일": "Wed",
-        "thu": "Thu",
-        "thursday": "Thu",
-        "목": "Thu",
-        "목요일": "Thu",
-        "fri": "Fri",
-        "friday": "Fri",
-        "금": "Fri",
-        "금요일": "Fri",
-        "sat": "Sat",
-        "saturday": "Sat",
-        "토": "Sat",
-        "토요일": "Sat",
-        "sun": "Sun",
-        "sunday": "Sun",
-        "일": "Sun",
-        "일요일": "Sun",
-    }
     try:
-        return day_aliases[day]
+        return DAY_ALIASES[day]
     except KeyError:
         raise ValueError("요일은 월~일 또는 Mon~Sun 형식으로 입력해주세요.")

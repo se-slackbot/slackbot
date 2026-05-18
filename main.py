@@ -3,7 +3,6 @@ import os
 import sys
 import threading
 
-import psycopg2
 import uvicorn
 from dotenv import load_dotenv
 from slack_bolt import App
@@ -11,7 +10,8 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from api import create_api
 from config_store import ConfigStore
-from schedule.repository import init_db, insert_sample_data
+from database import ensure_sqlite_directory, resolve_db_path
+from schedule.repository import count_courses, init_db, insert_sample_data
 from slack.commands import register_commands
 from scheduler import create_scheduler
 
@@ -32,14 +32,19 @@ def _require_env(name: str) -> str:
     return val
 
 
-def _count_courses() -> int:
-    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+def _ensure_db_directory(db_path: str) -> None:
+    ensure_sqlite_directory(db_path)
+
+
+def _is_valid_time(value: str) -> bool:
+    parts = value.split(":")
+    if len(parts) != 2:
+        return False
     try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM courses")
-            return cur.fetchone()[0]
-    finally:
-        conn.close()
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return False
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 def main() -> None:
@@ -47,15 +52,18 @@ def main() -> None:
     signing_secret = _require_env("SLACK_SIGNING_SECRET")
     api_key = _require_env("OPENWEATHER_API_KEY")
     channel_id = _require_env("SLACK_CHANNEL_ID")
-    _require_env("DATABASE_URL")
 
     notify_time = os.getenv("NOTIFY_TIME", "07:00")
-    db_path = ""  # PostgreSQL 사용으로 불필요 (하위 호환용)
+    if not _is_valid_time(notify_time):
+        logger.error("NOTIFY_TIME 형식이 올바르지 않습니다: %s (예: 07:00)", notify_time)
+        sys.exit(1)
+
+    db_path = resolve_db_path()
     app_token = os.getenv("SLACK_APP_TOKEN", "")
 
     init_db(db_path)
 
-    if _count_courses() == 0:
+    if count_courses(db_path) == 0:
         insert_sample_data(db_path)
 
     app = App(token=bot_token, signing_secret=signing_secret)

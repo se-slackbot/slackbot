@@ -4,6 +4,7 @@
 # Google OAuth
 credentials.json
 token.json
+token_*.json
 
 # 데이터베이스
 data/

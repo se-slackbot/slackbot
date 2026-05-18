@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![Slack](https://img.shields.io/badge/Slack-Bolt%20for%20Python-4A154B?style=for-the-badge&logo=slack&logoColor=white)
 ![APScheduler](https://img.shields.io/badge/APScheduler-3.x-2E7D32?style=for-the-badge)
-![SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![Database](https://img.shields.io/badge/SQLite%20%2F%20PostgreSQL-336791?style=for-the-badge)
 ![OpenWeatherMap](https://img.shields.io/badge/OpenWeatherMap-API-EB6E4B?style=for-the-badge)
 ![pytest](https://img.shields.io/badge/pytest-8.x-0A9EDC?style=for-the-badge&logo=pytest&logoColor=white)
 
@@ -17,14 +17,14 @@
 | 목적 | Slack 안에서 날씨, 강의 일정, 개인 알림 설정을 한 번에 관리 |
 | 주요 사용자 | 수업 일정을 Slack에서 확인하려는 학생 또는 팀 구성원 |
 | 실행 방식 | Slack Bolt HTTP 모드 또는 Socket Mode |
-| 데이터 저장 | SQLite |
+| 데이터 저장 | SQLite 또는 PostgreSQL |
 | 외부 API | OpenWeatherMap Current Weather / Forecast API |
 
 ## 핵심 목표
 
 - 매일 지정 시각에 날씨와 오늘 강의 일정을 Slack 채널 또는 DM으로 전송합니다.
 - `/weather`, `/schedule`, `/config` 등 슬래시 커맨드로 즉시 조회와 설정 변경을 지원합니다.
-- 사용자별 도시, 알림 시각, 타임존, 개인 시간표를 SQLite에 저장합니다.
+- 사용자별 도시, 알림 시각, 타임존, 개인 시간표를 SQLite 또는 PostgreSQL에 저장합니다.
 - 날씨 API 실패 시 캐시 데이터로 폴백하고, Slack 전송 실패 시 재시도합니다.
 - 주요 로직을 모듈 단위로 분리해 테스트 가능한 구조로 유지합니다.
 
@@ -47,7 +47,7 @@
 | Slack App | Slack Bolt for Python |
 | Scheduler | APScheduler 3.x |
 | Weather API | OpenWeatherMap |
-| Database | SQLite |
+| Database | SQLite / PostgreSQL |
 | HTTP Client | requests |
 | Env Management | python-dotenv |
 | Test | pytest, requests-mock |
@@ -65,7 +65,7 @@ main.py
         +-- slack/client.py           # Slack 메시지 전송 및 재시도
         +-- weather/fetcher.py        # OpenWeatherMap API 호출 및 캐시
         +-- weather/formatter.py      # 날씨 데이터 표시 형식 변환
-        +-- schedule/repository.py    # 강의 일정 SQLite 저장소
+        +-- schedule/repository.py    # 강의 일정 저장소
         +-- schedule/formatter.py     # 일정 목록 메시지 포맷
         +-- config_store.py           # 사용자 설정 저장소
         +-- scheduler.py              # 데일리 브리프 스케줄링
@@ -133,7 +133,10 @@ cp .env.example .env
 | `SLACK_CHANNEL_ID` | 필수 | 데일리 브리프를 받을 Slack 채널 ID |
 | `SLACK_APP_TOKEN` | 선택 | Socket Mode 사용 시 필요한 `xapp-` 토큰 |
 | `NOTIFY_TIME` | 선택 | 기본 알림 시각, 기본값 `07:00` |
+| `DATABASE_URL` | 선택 | PostgreSQL 연결 문자열. 설정되면 `DB_PATH`보다 우선합니다. |
 | `DB_PATH` | 선택 | SQLite 파일 경로, 기본값 `./data/bot.db` |
+| `CALENDAR_ACCESS_TOKEN` | 필수 | ICS 캘린더 다운로드 URL 보호 토큰 |
+| `GOOGLE_TOKEN_DIR` | 선택 | Google OAuth 토큰 저장 디렉터리, 기본값 `./data/google_tokens` |
 
 ### 4. Slack App 설정
 
@@ -189,7 +192,7 @@ python main.py
 
 ## 데이터 모델
 
-SQLite DB에는 사용자 설정과 강의 일정이 저장됩니다.
+DB에는 사용자 설정과 강의 일정이 저장됩니다. `DATABASE_URL`이 있으면 PostgreSQL을 사용하고, 없으면 `DB_PATH`의 SQLite 파일을 사용합니다.
 
 | 테이블 | 저장 데이터 |
 |--------|-------------|
@@ -218,6 +221,7 @@ pytest
 ## 보안
 
 - 토큰과 API 키는 `.env` 파일에서만 관리합니다.
-- `.env`와 `data/*.db`는 Git에 커밋하지 않습니다.
+- `.env`, `data/`, Google OAuth 토큰 파일은 Git에 커밋하지 않습니다.
+- ICS URL은 `CALENDAR_ACCESS_TOKEN` 쿼리 파라미터가 맞아야 다운로드됩니다.
 - Slack Signing Secret으로 모든 Slack 요청 서명을 검증합니다.
 - 운영 환경에서는 Slack 토큰과 OpenWeatherMap API 키를 주기적으로 교체합니다.

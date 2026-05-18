@@ -7,34 +7,50 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   test:
-    name: Test Python ${{ matrix.python-version }}
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     strategy:
       fail-fast: false
       matrix:
         python-version:
           - "3.11"
+          - "3.12"
+          - "3.13"
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Verify installed packages
+        run: python -m pip check
+
+      - name: Compile Python sources
+        run: python -m compileall -q main.py api.py config_store.py database.py google_calendar.py scheduler.py weather schedule slack tests
 
       - name: Run tests
         run: python -m pytest -q
