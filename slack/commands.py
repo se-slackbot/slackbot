@@ -11,8 +11,10 @@ from slack.message_builder import (
     build_weather_message,
     build_schedule_message,
     build_help_message,
+    build_daily_message,
 )
 from config_store import ConfigStore
+from google_calendar import fetch_today_events
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +22,7 @@ WEATHER_COMMANDS = ("/날씨", "/날씨1", "/weather")
 SCHEDULE_COMMANDS = ("/시간표", "/시간표1", "/schedule")
 CONFIG_COMMANDS = ("/설정", "/config")
 HELP_COMMANDS = ("/도움말", "/bot-help")
+BRIEF_COMMANDS = ("/브리핑", "/브리핑1", "/brief")
 
 
 def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path: str) -> None:
@@ -173,10 +176,33 @@ def register_commands(app: App, config_store: ConfigStore, api_key: str, db_path
         logger.info("슬래시 커맨드 수신: 도움말")
         respond(blocks=build_help_message(), response_type="ephemeral")
 
+    def cmd_brief(ack, respond, command):
+        ack()
+        user_id = command["user_id"]
+        logger.info("슬래시 커맨드 수신: 브리핑 user=%s", user_id)
+
+        config = config_store.get(user_id)
+        city = config.get("city") or "Seoul"
+        timezone = config.get("timezone") or "Asia/Seoul"
+
+        try:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo as _ZoneInfo
+            today = datetime.now(_ZoneInfo(timezone)).date()
+            weather = fetch_weather(city, api_key)
+            courses = get_courses_for_date(db_path, today, user_id)
+            calendar_events = fetch_today_events(timezone=timezone)
+            blocks = build_daily_message(weather, courses, timezone=timezone, calendar_events=calendar_events)
+            respond(blocks=blocks, response_type="ephemeral")
+        except Exception as e:
+            logger.error("/브리핑 실패: %s", e)
+            respond(text=f":warning: 브리핑을 가져올 수 없습니다: {e}", response_type="ephemeral")
+
     _register_aliases(app, WEATHER_COMMANDS, cmd_weather)
     _register_aliases(app, SCHEDULE_COMMANDS, cmd_schedule)
     _register_aliases(app, CONFIG_COMMANDS, cmd_config)
     _register_aliases(app, HELP_COMMANDS, cmd_help)
+    _register_aliases(app, BRIEF_COMMANDS, cmd_brief)
 
 
 def _register_aliases(app: App, command_names: tuple[str, ...], handler) -> None:

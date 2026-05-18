@@ -1,6 +1,10 @@
 # 환경 변수
 .env
 
+# Google OAuth
+credentials.json
+token.json
+
 # 데이터베이스
 data/
 

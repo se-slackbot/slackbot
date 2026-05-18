@@ -7,7 +7,12 @@ from schedule.formatter import format_course_list
 VERSION = "v1.0"
 
 
-def build_daily_message(weather: dict, courses: list[dict], timezone: str = "Asia/Seoul") -> list[dict]:
+def build_daily_message(
+    weather: dict,
+    courses: list[dict],
+    timezone: str = "Asia/Seoul",
+    calendar_events: list[dict] | None = None,
+) -> list[dict]:
     tz = ZoneInfo(timezone)
     now = datetime.now(tz)
     today_str = now.strftime("%Y년 %m월 %d일 (%a)")
@@ -35,16 +40,34 @@ def build_daily_message(weather: dict, courses: list[dict], timezone: str = "Asi
                 "text": f"*:books: 오늘의 강의*\n{format_course_list(courses)}",
             },
         },
-        {
-            "type": "context",
-            "elements": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"마지막 업데이트: {updated_str} | {VERSION}",
-                }
-            ],
-        },
     ]
+
+    if calendar_events:
+        event_lines = []
+        for e in calendar_events:
+            time_prefix = f"`{e['time']}`  " if e["time"] != "종일" else "`종일`  "
+            location = f"  _{e['location']}_" if e.get("location") else ""
+            event_lines.append(f"{time_prefix}*{e['summary']}*{location}")
+        blocks += [
+            {"type": "divider"},
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": ":calendar: *오늘의 일정*\n" + "\n".join(event_lines),
+                },
+            },
+        ]
+
+    blocks.append({
+        "type": "context",
+        "elements": [
+            {
+                "type": "mrkdwn",
+                "text": f"마지막 업데이트: {updated_str} | {VERSION}",
+            }
+        ],
+    })
     return blocks
 
 
@@ -85,6 +108,7 @@ def build_help_message() -> list[dict]:
                     "• `/schedule 수정`, `/시간표 수정 <ID> <field=value>...` — 개인 시간표 수정\n"
                     "• `/schedule 삭제`, `/시간표 삭제 <ID>` — 개인 시간표 삭제\n"
                     "• `/config`, `/설정 [도시] [HH:MM] [timezone]` — 위치, 알림 시각, 타임존 변경\n"
+                    "• `/브리핑`, `/brief` — 날씨 + 시간표 + 캘린더 즉시 조회\n"
                     "• `/bot-help`, `/도움말` — 이 메시지 표시"
                 ),
             },

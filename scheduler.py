@@ -12,6 +12,7 @@ from weather.fetcher import fetch_weather
 from schedule.repository import get_courses_for_date
 from slack.message_builder import build_daily_message
 from slack.client import post_daily_brief
+from google_calendar import fetch_today_events
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,8 @@ def _run_daily_brief(app, channel_id: str, api_key: str, db_path: str, city: str
         _notify_error(app, channel_id, f"시간표 수집 실패: {e}")
         return
 
-    blocks = build_daily_message(weather, courses)
+    calendar_events = fetch_today_events()
+    blocks = build_daily_message(weather, courses, calendar_events=calendar_events)
 
     try:
         post_daily_brief(app, channel_id, blocks)
@@ -64,7 +66,8 @@ def _run_user_daily_brief(app, user_config: dict, api_key: str, db_path: str) ->
         _notify_error(app, user_id, f"시간표 수집 실패: {e}")
         return
 
-    blocks = build_daily_message(weather, courses, timezone=timezone)
+    calendar_events = fetch_today_events(timezone=timezone)
+    blocks = build_daily_message(weather, courses, timezone=timezone, calendar_events=calendar_events)
 
     try:
         post_daily_brief(app, user_id, blocks)
