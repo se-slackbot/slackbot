@@ -1,8 +1,6 @@
-"""slack/message_builder.py 테스트"""
+"""bot/message_builder.py 테스트"""
 import pytest
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from slack.message_builder import (
+from bot.message_builder import (
     build_weather_message,
     build_schedule_message,
     build_daily_message,

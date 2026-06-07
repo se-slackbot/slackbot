@@ -1,12 +1,9 @@
-"""weather/fetcher.py 테스트"""
+"""bot/weather.py 테스트"""
 import time
 import pytest
 from unittest.mock import MagicMock, patch
-import sys
-import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from weather.fetcher import fetch_weather, _fetch_rain_probability, _cache, CACHE_TTL
+from bot.weather import InvalidAPIKey, fetch_weather, _fetch_rain_probability, _cache, CACHE_TTL
 
 
 WEATHER_RESPONSE = {
@@ -84,6 +81,32 @@ class TestFetchWeather:
 
         result = fetch_weather("Seoul", "FAKE_KEY")
         assert result["temp"] == 15
+
+    def test_401은_InvalidAPIKey로_구분(self, requests_mock):
+        requests_mock.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            status_code=401,
+            json={"cod": 401, "message": "Invalid API key"},
+        )
+
+        with pytest.raises(InvalidAPIKey):
+            fetch_weather("Seoul", "BAD_KEY")
+
+    def test_401은_만료_캐시로_폴백하지_않음(self, requests_mock):
+        """일시 오류와 달리 키 오류는 캐시로 가려서는 안 된다."""
+        _cache["weather:Seoul"] = {
+            "data": {"city": "Seoul", "temp": 15, "feels_like": 13, "humidity": 70,
+                     "weather_id": 800, "description": "맑음", "rain_prob": 10},
+            "timestamp": time.time() - CACHE_TTL - 1,
+        }
+        requests_mock.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            status_code=401,
+            json={"cod": 401, "message": "Invalid API key"},
+        )
+
+        with pytest.raises(InvalidAPIKey):
+            fetch_weather("Seoul", "BAD_KEY")
 
     def test_기온_반올림_정수_반환(self, requests_mock):
         resp = {**WEATHER_RESPONSE, "main": {"temp": 18.6, "feels_like": 16.3, "humidity": 60}}

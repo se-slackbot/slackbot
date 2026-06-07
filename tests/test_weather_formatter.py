@@ -1,8 +1,6 @@
-"""weather/formatter.py 테스트"""
+"""bot/weather.py 테스트"""
 import pytest
-import sys, os
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from weather.formatter import get_weather_emoji, format_weather_fields
+from bot.message_builder import get_weather_emoji, format_weather_fields
 
 
 class TestGetWeatherEmoji:

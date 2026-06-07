@@ -1,21 +1,19 @@
-"""schedule/repository.py 테스트"""
+"""bot/courses.py 테스트"""
 import pytest
 import tempfile
 import os
 import sqlite3
 from datetime import date
 
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from schedule.repository import (
+from bot.courses import (
     init_db,
     get_courses_for_date,
     insert_sample_data,
     add_course,
     update_course,
     delete_course,
-    DAY_MAP,
+    DAYS,
 )
 
 
@@ -151,12 +149,6 @@ class TestUserSchedule:
         assert delete_course(db_path, "U_B", course_id) is False
 
 
-class TestDayMap:
+class TestDays:
     def test_요일_매핑_정확성(self):
-        assert DAY_MAP[0] == "Mon"
-        assert DAY_MAP[1] == "Tue"
-        assert DAY_MAP[2] == "Wed"
-        assert DAY_MAP[3] == "Thu"
-        assert DAY_MAP[4] == "Fri"
-        assert DAY_MAP[5] == "Sat"
-        assert DAY_MAP[6] == "Sun"
+        assert DAYS == ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")

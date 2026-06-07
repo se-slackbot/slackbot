@@ -1,19 +1,17 @@
-"""slack/commands.py 보조 함수 테스트"""
+"""bot/commands.py 보조 함수 테스트"""
 import pytest
 import tempfile
 from datetime import date
-import sys, os
+import os
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from config_store import ConfigStore
-from schedule.repository import add_course, get_courses_for_date, init_db
-from slack.commands import (
+from bot.config_store import ConfigStore
+from bot.courses import add_course, get_courses_for_date, init_db
+from bot.scheduler import is_valid_timezone, parse_hhmm
+from bot.commands import (
     _parse_add_course_arg,
     _parse_date_arg,
     _parse_delete_course_arg,
     _parse_update_course_arg,
-    _is_valid_time,
-    _is_valid_timezone,
     _normalize_day,
     register_commands,
 )
@@ -75,42 +73,42 @@ class TestParseDateArg:
 
 class TestIsValidTime:
     def test_정상_시각(self):
-        assert _is_valid_time("07:00") is True
-        assert _is_valid_time("00:00") is True
-        assert _is_valid_time("23:59") is True
+        assert parse_hhmm("07:00") is not None
+        assert parse_hhmm("00:00") is not None
+        assert parse_hhmm("23:59") is not None
 
     def test_경계값_시각(self):
-        assert _is_valid_time("00:00") is True
-        assert _is_valid_time("23:59") is True
+        assert parse_hhmm("00:00") is not None
+        assert parse_hhmm("23:59") is not None
 
     def test_잘못된_시_범위(self):
-        assert _is_valid_time("24:00") is False
-        assert _is_valid_time("25:30") is False
+        assert parse_hhmm("24:00") is None
+        assert parse_hhmm("25:30") is None
 
     def test_잘못된_분_범위(self):
-        assert _is_valid_time("07:60") is False
-        assert _is_valid_time("12:99") is False
+        assert parse_hhmm("07:60") is None
+        assert parse_hhmm("12:99") is None
 
     def test_구분자_없음(self):
-        assert _is_valid_time("0700") is False
+        assert parse_hhmm("0700") is None
 
     def test_빈_문자열(self):
-        assert _is_valid_time("") is False
+        assert parse_hhmm("") is None
 
     def test_문자_포함(self):
-        assert _is_valid_time("ab:cd") is False
+        assert parse_hhmm("ab:cd") is None
 
     def test_콜론_초과(self):
-        assert _is_valid_time("07:00:00") is False
+        assert parse_hhmm("07:00:00") is None
 
 
 class TestIsValidTimezone:
     def test_정상_타임존(self):
-        assert _is_valid_timezone("Asia/Seoul") is True
-        assert _is_valid_timezone("America/New_York") is True
+        assert is_valid_timezone("Asia/Seoul") is True
+        assert is_valid_timezone("America/New_York") is True
 
     def test_잘못된_타임존(self):
-        assert _is_valid_timezone("Seoul") is False
+        assert is_valid_timezone("Seoul") is False
 
 
 class TestNormalizeDay:
@@ -274,6 +272,40 @@ class TestRegisterCommandsScheduleUpdateDelete:
         assert responses[0]["response_type"] == "ephemeral"
         assert "삭제했습니다" in responses[0]["text"]
         assert get_courses_for_date(db_path, monday, "U_001") == []
+
+
+class TestRegisterCommandsScheduleList:
+    def test_목록_명령어가_수정_삭제용_ID를_보여준다(self, db_path):
+        app = FakeApp()
+        register_commands(app, ConfigStore(db_path), "api-key", db_path)
+        responses = []
+        course_id = add_course(db_path, "U_001", "알고리즘", "Mon", "09:00", "10:30")
+        add_course(db_path, "U_002", "남의일정", "Mon", "11:00", "12:00")
+
+        app.handlers["/시간표"](
+            ack=lambda: None,
+            respond=lambda **kwargs: responses.append(kwargs),
+            command={"user_id": "U_001", "text": "목록"},
+        )
+
+        text = responses[0]["blocks"][0]["text"]["text"]
+        assert responses[0]["response_type"] == "ephemeral"
+        assert f"`{course_id}`" in text
+        assert "알고리즘" in text
+        assert "남의일정" not in text
+
+    def test_목록_비어있으면_안내(self, db_path):
+        app = FakeApp()
+        register_commands(app, ConfigStore(db_path), "api-key", db_path)
+        responses = []
+
+        app.handlers["/schedule"](
+            ack=lambda: None,
+            respond=lambda **kwargs: responses.append(kwargs),
+            command={"user_id": "U_404", "text": "목록"},
+        )
+
+        assert "등록한 개인 일정이 없습니다" in responses[0]["blocks"][0]["text"]["text"]
 
 
 class TestRegisterCommandsConfig:

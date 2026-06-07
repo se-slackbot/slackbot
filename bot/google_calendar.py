@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 import logging
 import os
 from datetime import datetime
@@ -9,7 +10,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
-from database import get_google_token, save_google_token, resolve_db_path
+from bot.database import get_google_token, save_google_token
 
 logger = logging.getLogger(__name__)
 
@@ -23,55 +24,48 @@ _USE_DB_TOKENS = bool(os.getenv("DATABASE_URL"))
 
 def _token_file(user_id: str | None) -> str:
     os.makedirs(TOKEN_DIR, exist_ok=True)
-    if user_id:
-        return os.path.join(TOKEN_DIR, f"token_{user_id}.json")
-    return os.path.join(TOKEN_DIR, "token.json")
+    return os.path.join(TOKEN_DIR, f"token_{user_id}.json" if user_id else "token.json")
 
 
 def _load_token_json(user_id: str | None) -> str | None:
     """DB 또는 파일에서 토큰 JSON 문자열 로드."""
-    key = user_id or "default"
     if _USE_DB_TOKENS:
-        return get_google_token(key)
+        return get_google_token(user_id or "default")
     token_file = _token_file(user_id)
-    if os.path.exists(token_file):
-        with open(token_file) as f:
-            return f.read()
-    return None
+    if not os.path.exists(token_file):
+        return None
+    with open(token_file) as f:
+        return f.read()
 
 
 def _save_token_json(user_id: str | None, token_json: str) -> None:
     """DB 또는 파일에 토큰 JSON 문자열 저장."""
-    key = user_id or "default"
     if _USE_DB_TOKENS:
-        save_google_token(key, token_json)
+        save_google_token(user_id or "default", token_json)
     else:
         with open(_token_file(user_id), "w") as f:
             f.write(token_json)
 
 
 def _get_credentials(user_id: str | None = None) -> Credentials | None:
-    creds = None
-
     token_json = _load_token_json(user_id)
-    if token_json:
-        creds = Credentials.from_authorized_user_info(
-            __import__("json").loads(token_json), SCOPES
-        )
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            _save_token_json(user_id, creds.to_json())
+    if not token_json:
+        if os.path.exists(CREDENTIALS_FILE):
+            logger.info("Google Calendar 미인증 사용자: %s", user_id)
         else:
-            # 토큰 없음 → 해당 사용자는 미인증 상태
-            if not os.path.exists(CREDENTIALS_FILE):
-                logger.warning("credentials.json 없음 - Google Calendar 연동 비활성화")
-            else:
-                logger.info("Google Calendar 미인증 사용자: %s", user_id)
-            return None
+            logger.warning("credentials.json 없음 - Google Calendar 연동 비활성화")
+        return None
 
-    return creds
+    creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+    if creds.valid:
+        return creds
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        _save_token_json(user_id, creds.to_json())
+        return creds
+
+    logger.info("Google Calendar 토큰이 유효하지 않음, 재인증 필요: %s", user_id)
+    return None
 
 
 def fetch_today_events(timezone: str = "Asia/Seoul", user_id: str | None = None) -> list[dict]:
@@ -81,42 +75,40 @@ def fetch_today_events(timezone: str = "Asia/Seoul", user_id: str | None = None)
         if not creds:
             return []
 
-        service = build("calendar", "v3", credentials=creds)
-        tz = ZoneInfo(timezone)
-        now = datetime.now(tz)
-        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        end = now.replace(hour=23, minute=59, second=59, microsecond=0)
+        now = datetime.now(ZoneInfo(timezone))
+        result = (
+            build("calendar", "v3", credentials=creds)
+            .events()
+            .list(
+                calendarId="primary",
+                timeMin=now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat(),
+                timeMax=now.replace(hour=23, minute=59, second=59, microsecond=0).isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
 
-        events_result = service.events().list(
-            calendarId="primary",
-            timeMin=start.isoformat(),
-            timeMax=end.isoformat(),
-            singleEvents=True,
-            orderBy="startTime",
-        ).execute()
-
-        events = []
-        for item in events_result.get("items", []):
-            start_val = item["start"].get("dateTime", item["start"].get("date", ""))
-
-            if "T" in start_val:
-                dt = datetime.fromisoformat(start_val)
-                time_str = dt.strftime("%H:%M")
-            else:
-                time_str = "종일"
-
-            events.append({
+        events = [
+            {
                 "summary": item.get("summary", "(제목 없음)"),
-                "time": time_str,
+                "time": _event_time(item["start"]),
                 "location": item.get("location", ""),
-            })
-
+            }
+            for item in result.get("items", [])
+        ]
         logger.info("Google Calendar 일정 %d개 가져옴 (user=%s)", len(events), user_id)
         return events
 
     except Exception as e:
         logger.error("Google Calendar 조회 실패: %s (user=%s)", e, user_id)
         return []
+
+
+def _event_time(start: dict) -> str:
+    """시각이 있으면 HH:MM, 종일 일정이면 '종일'."""
+    start_val = start.get("dateTime", start.get("date", ""))
+    return datetime.fromisoformat(start_val).strftime("%H:%M") if "T" in start_val else "종일"
 
 
 def authorize_user(user_id: str) -> bool:

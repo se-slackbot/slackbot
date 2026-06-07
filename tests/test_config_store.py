@@ -1,13 +1,11 @@
-"""config_store.py 테스트"""
+"""bot/config_store.py 테스트"""
 import pytest
 import tempfile
 import os
 import sqlite3
 
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from config_store import ConfigStore, DEFAULT_CONFIG
+from bot.config_store import ConfigStore, DEFAULT_CONFIG
 
 
 @pytest.fixture

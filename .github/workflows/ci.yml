@@ -50,7 +50,7 @@ jobs:
         run: python -m pip check
 
       - name: Compile Python sources
-        run: python -m compileall -q main.py api.py config_store.py database.py google_calendar.py scheduler.py weather schedule slack tests
+        run: python -m compileall -q .
 
       - name: Run tests
         run: python -m pytest -q

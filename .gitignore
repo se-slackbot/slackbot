@@ -1,42 +1,40 @@
-# 환경 변수
-.env
+# OS
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
 
-# Google OAuth
-credentials.json
-token.json
-token_*.json
-
-# 데이터베이스
-data/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.egg-info/
-dist/
-build/
-.eggs/
-
-# 가상환경
-.venv/
-venv/
-env/
-
-# 테스트 / 커버리지
-.pytest_cache/
-.coverage
-htmlcov/
-
-# IDE
-.vscode/
+# Editors
 .idea/
+.vscode/
 *.swp
 *.swo
 
-# macOS
-.DS_Store
+# Environment
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
 
-# 로그
+# Logs
 *.log
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Tests and tooling
+.pytest_cache/
+
+# Project-specific
+credentials.json
+token*.json
+data/
